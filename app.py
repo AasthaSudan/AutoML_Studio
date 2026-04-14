@@ -8,7 +8,7 @@ import pickle
 import base64
 
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler, LabelEncoder, OrdinalEncoder
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, MaxAbsScaler, LabelEncoder, OrdinalEncoder
 from sklearn.ensemble import (IsolationForest, RandomForestClassifier, RandomForestRegressor,
                                GradientBoostingClassifier, GradientBoostingRegressor)
 from sklearn.cluster import DBSCAN, OPTICS, KMeans
@@ -711,7 +711,6 @@ with tabs[2]:
                     elif strategy == "Mode":  s[col_imp].fillna(s[col_imp].mode()[0], inplace=True)
                     else: st.session_state.df = s.dropna(subset=[col_imp]).reset_index(drop=True)
                     st.success(f"✦  Imputed `{col_imp}` via {strategy}.")
-                    st.rerun()
         else:
             st.success("✦  No missing values — flawless clarity.")
 
@@ -720,9 +719,20 @@ with tabs[2]:
         drop_cols = st.multiselect("Columns to drop:",
                                     [c for c in st.session_state.df.columns if c != st.session_state.target_col])
         if st.button("Drop Selected") and drop_cols:
+            removed_cols = drop_cols.copy()
             st.session_state.df = st.session_state.df.drop(columns=drop_cols)
-            st.success(f"✦  Dropped {len(drop_cols)} column(s).")
-            st.rerun()
+            st.success(f"✦  Dropped {len(removed_cols)} column(s).")
+            with st.expander("📋 Details", expanded=True):
+                col_det1, col_det2 = st.columns(2)
+                with col_det1:
+                    st.markdown("**Removed Columns:**")
+                    for col in removed_cols:
+                        st.markdown(f"  • `{col}`")
+                with col_det2:
+                    st.markdown("**Updated Dataset:**")
+                    st.markdown(f"  • Rows: `{st.session_state.df.shape[0]:,}`")
+                    st.markdown(f"  • Columns: `{st.session_state.df.shape[1]}` (was {st.session_state.df.shape[1] + len(removed_cols)})")
+            st.dataframe(st.session_state.df.head(5), use_container_width=True)
 
         section_hr()
         st.markdown("##### Outlier Detection")
@@ -768,7 +778,6 @@ with tabs[2]:
                 if st.button(f"Remove {n_out:,} Outliers"):
                     st.session_state.df = st.session_state.df.drop(tmp.index[outliers]).reset_index(drop=True)
                     st.success(f"✦  Removed {n_out:,} stones. Dataset now {len(st.session_state.df):,} rows.")
-                    st.rerun()
             else:
                 st.success(f"✦  No outliers found via {outlier_method}.")
 
@@ -781,6 +790,7 @@ with tabs[2]:
             with enc_c2: enc_method = st.selectbox("Method:", ["Label Encoding", "One-Hot Encoding", "Ordinal Encoding"])
             if st.button("Encode"):
                 df_enc = st.session_state.df.copy()
+                cols_before = df_enc.shape[1]
                 if enc_method == "Label Encoding":
                     le = LabelEncoder()
                     for col in enc_sel:
@@ -790,9 +800,22 @@ with tabs[2]:
                 elif enc_method == "Ordinal Encoding":
                     oe = OrdinalEncoder()
                     df_enc[enc_sel] = oe.fit_transform(df_enc[enc_sel].astype(str))
+                cols_after = df_enc.shape[1]
                 st.session_state.df = df_enc
                 st.success(f"✦  {enc_method} applied to {len(enc_sel)} column(s).")
-                st.rerun()
+                with st.expander("📋 Encoding Results", expanded=True):
+                    col_enc1, col_enc2 = st.columns(2)
+                    with col_enc1:
+                        st.markdown("**Encoded Columns:**")
+                        for col in enc_sel:
+                            st.markdown(f"  • `{col}`")
+                    with col_enc2:
+                        st.markdown("**Transformation Summary:**")
+                        st.markdown(f"  • Method: `{enc_method}`")
+                        st.markdown(f"  • Columns Before: `{cols_before}`")
+                        st.markdown(f"  • Columns After: `{cols_after}`")
+                st.markdown("**Encoded Dataset Preview:**")
+                st.dataframe(st.session_state.df.head(5), use_container_width=True)
         else:
             st.info("No categorical columns — ready for modelling.")
 
@@ -823,9 +846,91 @@ with tabs[2]:
                                 df_fe[f"{fe_col}_x_{col2}"] = df_fe[fe_col] * df_fe[col2]
                         st.session_state.df = df_fe
                         st.success(f"✦  Feature `{fe_transform}` on `{fe_col}` added.")
-                        st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
+
+        section_hr()
+        st.markdown("##### Feature Scaling — Normalize the Dimensions")
+        num_cols_scale = st.session_state.df.select_dtypes(include=np.number).columns.tolist()
+        if num_cols_scale:
+            scale_c1, scale_c2 = st.columns([2, 1.5])
+            with scale_c1:
+                scale_cols = st.multiselect("Columns to scale:", num_cols_scale, 
+                                             default=num_cols_scale,
+                                             help="Select numeric columns to normalize")
+            with scale_c2:
+                scale_method = st.selectbox("Scaler:", [
+                    "StandardScaler",
+                    "MinMaxScaler", 
+                    "RobustScaler",
+                    "MaxAbsScaler"
+                ], help="• StandardScaler: Zero mean, unit variance\n• MinMaxScaler: Scale to [0,1]\n• RobustScaler: Robust to outliers\n• MaxAbsScaler: Scale to [-1,1]")
+            
+            if st.button("⬧  Apply Scaling"):
+                if scale_cols:
+                    df_scaled = st.session_state.df.copy()
+                    try:
+                        if scale_method == "StandardScaler":
+                            scaler = StandardScaler()
+                        elif scale_method == "MinMaxScaler":
+                            scaler = MinMaxScaler()
+                        elif scale_method == "RobustScaler":
+                            scaler = RobustScaler()
+                        else:  # MaxAbsScaler
+                            scaler = MaxAbsScaler()
+                        
+                        # Fit and transform
+                        df_scaled[scale_cols] = scaler.fit_transform(df_scaled[scale_cols])
+                        st.session_state.df = df_scaled
+                        
+                        # Show results
+                        st.success(f"✦  {scale_method} applied to {len(scale_cols)} column(s).")
+                        
+                        with st.expander("📊 Scaling Statistics", expanded=True):
+                            stat_c1, stat_c2 = st.columns(2)
+                            with stat_c1:
+                                st.markdown("**Scaled Columns:**")
+                                for col in scale_cols:
+                                    st.markdown(f"  • `{col}`")
+                            with stat_c2:
+                                st.markdown("**Statistics:**")
+                                st.markdown(f"  • Method: `{scale_method}`")
+                                st.markdown(f"  • Min value: `{df_scaled[scale_cols].min().min():.4f}`")
+                                st.markdown(f"  • Max value: `{df_scaled[scale_cols].max().max():.4f}`")
+                                st.markdown(f"  • Mean: `{df_scaled[scale_cols].mean().mean():.4f}`")
+                        
+                        # Show before/after comparison for one column
+                        if len(scale_cols) > 0:
+                            st.markdown("**Scaled Distribution (First Column):**")
+                            col_compare = scale_cols[0]
+                            
+                            col_v1, col_v2 = st.columns(2)
+                            with col_v1:
+                                st.markdown("**Distribution:**")
+                                fig_scaled = px.histogram(df_scaled, x=col_compare, nbins=40,
+                                                         color_discrete_sequence=[D_BLUE])
+                                fig_scaled.update_layout(**dtheme(height=280, bargap=0.04))
+                                st.plotly_chart(fig_scaled, use_container_width=True)
+                            with col_v2:
+                                st.markdown("**Scaled Statistics:**")
+                                stats_text = f"""
+                                **Column: `{col_compare}`**
+                                • Min: `{df_scaled[col_compare].min():.4f}`
+                                • Max: `{df_scaled[col_compare].max():.4f}`
+                                • Mean: `{df_scaled[col_compare].mean():.4f}`
+                                • Std: `{df_scaled[col_compare].std():.4f}`
+                                • Median: `{df_scaled[col_compare].median():.4f}`
+                                """
+                                st.markdown(stats_text)
+                        
+                        st.markdown("**Scaled Dataset Preview:**")
+                        st.dataframe(st.session_state.df[scale_cols].head(8), use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Scaling error: {str(e)}")
+                else:
+                    st.warning("Select at least one column to scale.")
+        else:
+            st.info("No numeric columns to scale.")
 
         section_hr()
         st.markdown("##### Current Dataset")
